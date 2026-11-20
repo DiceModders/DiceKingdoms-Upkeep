@@ -64,6 +64,8 @@ internal static class Upkeep
         patcher.Patch(typeof(BuildingTypeApplyModifierInRange), "HasModifier", typeof(Upkeep), postfix: nameof(ModifierPostfix));
         patcher.Patch(typeof(HarvestPhase), "Reset", typeof(Upkeep), prefix: nameof(HarvestResetPrefix));
         patcher.Patch(typeof(BuildingTypeProducerAmplifier), "Yield", typeof(Upkeep), postfix: nameof(YieldPostfix));
+        patcher.Patch(typeof(BuildingTypeProducerAmplifier), "AverageFactor", typeof(Upkeep), postfix: nameof(AverageFactorPostfix));
+        HookDoAction();
 
         Core.Match.PhaseEntered += phase => { if (phase == MatchPhase.Disasters) _harvest = false; };
         Core.Match.Started += Clear;
@@ -250,47 +252,104 @@ internal static class Upkeep
         catch (Exception e) { Plugin.Once("modifier", "upkeep (fish bonus): " + e); }
     }
 
-    // ------------------------------------------------------------------ harvest: the Cathedral offering
+    // ------------------------------------------------------------------ the Cathedral offering: one of the game's own build actions
 
-    /// <summary>The harvest begins (every computer): pays the offerings before the game computes any yield.</summary>
+    /// <summary>
+    /// The offering travels like a market purchase: the window plans the game's own build action REPAIR_BUILDING (type 0) on the Cathedral's
+    /// id with this bit set. The game sends it to everybody with its own messages, runs it at once on your screen (preview: the gold drops at the
+    /// click) and on every other computer when the build phase ends (BuildPhase.ApplyChanges), which the game waits for. Every computer has
+    /// this mod (the rule is used only then), so every computer reads it as an offering. Building ids are (y &lt;&lt; 16 | x), far below this bit.
+    /// </summary>
+    internal const int OfferFlag = 0x40000000;
+    private const int RepairAction = 0;
+
+    // BuildData.DoAction(ref Action) takes the action struct BY REFERENCE, and the action holds object references (Building, arrays,
+    // Technology, Player). A Harmony patch on it made the game crash at the first building placed (2026-11-21): Il2CppInterop cannot
+    // pass such a struct by reference. So this is a plain native hook that reads the action in place:
+    //   bool DoAction(BuildData* this, BuildData.Action* action, MethodInfo* method)
+    //   Action: type (int) at 0x0, buildingId (int) at 0xC
+    private const int ActionType = 0x0, ActionBuildingId = 0xC;
+
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate byte DoActionFn(IntPtr self, IntPtr action, IntPtr method);
+    private static DoActionFn _doActionHook, _doActionOriginal;   // kept alive for as long as the game runs
+    private static object _doActionDetour;
+
+    private static void HookDoAction()
+    {
+        try
+        {
+            var method = typeof(BuildData).GetMethod("DoAction");
+            var field = Il2CppInterop.Common.Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(method);
+            IntPtr methodInfo = (IntPtr)field.GetValue(null);
+            IntPtr code = System.Runtime.InteropServices.Marshal.ReadIntPtr(methodInfo);   // Il2CppMethodInfo.methodPointer is its first field
+            _doActionHook = DoActionNative;
+            _doActionDetour = BepInEx.Unity.IL2CPP.Hook.INativeDetour.CreateAndApply(code, _doActionHook, out _doActionOriginal);
+            Plugin.L.LogInfo("[patch] OK   BuildData.DoAction (native, for the Cathedral offering)");
+        }
+        catch (Exception e) { Plugin.L.LogError("[patch] FAILED BuildData.DoAction: " + e.Message + " (the Cathedral offering will not work)"); }
+    }
+
+    /// <summary>
+    /// An offering action is handled here (the game's own code never sees it); every other action goes to the game unchanged. Same checks
+    /// and the same result on every computer: the Cathedral exists, it has no offering for the next harvest yet, and the island has the gold.
+    /// </summary>
+    private static byte DoActionNative(IntPtr self, IntPtr action, IntPtr method)
+    {
+        try
+        {
+            if (action != IntPtr.Zero && Mem.ReadInt(action, ActionType) == RepairAction)
+            {
+                int id = Mem.ReadInt(action, ActionBuildingId);
+                if ((id & OfferFlag) != 0) return Offer(new BuildData(self), id & ~OfferFlag) ? (byte)1 : (byte)0;
+            }
+        }
+        catch (Exception e) { Plugin.Once("offer", "upkeep (offering): " + e); return 0; }
+        return _doActionOriginal(self, action, method);
+    }
+
+    private static bool Offer(BuildData data, int cathedral)
+    {
+        if (!On) return false;
+        var island = data.Island;
+        var stats = island?.statistics;
+        var grid = island?.grid;
+        var game = data.GameState;
+        if (stats == null || grid == null || game == null) return false;
+        int harvest = game.TurnCounter + 1;   // the culture is doubled at the next harvest
+        var state = StateOf(grid);
+        if (state.OfferTurn != harvest) { state.OfferTurn = harvest; state.Offered.Clear(); }
+        if (state.Offered.Contains(cathedral)) return false;
+        bool found = false;
+        foreach (var (id, b) in Buildings(grid))
+            if (id.value == cathedral && b.type.name == BuildingTypeName.CATHEDRAL) { found = true; break; }
+        if (!found || stats.Storage.stored.gold < OfferGold) return false;
+        stats.RemoveResource(new ResourceAmount { gold = OfferGold });
+        state.Offered.Add(cathedral);
+        Plugin.L.LogInfo($"turn {harvest - 1}: {island.Owner?.UserName} offered {OfferGold} gold at a Cathedral (culture doubled at the next harvest)");
+        return true;
+    }
+
+    /// <summary>The harvest begins (every computer), before the game computes any yield.</summary>
     public static void HarvestResetPrefix(HarvestPhase __instance)
     {
         try
         {
             if (!On) return;
             var game = __instance.GameState;
-            if (game == null) return;
-            int turn = game.TurnCounter;
-            if (turn <= 0) return;
+            if (game == null || game.TurnCounter <= 0) return;
             _harvest = true;
-            _harvestTurn = turn;
-            PayOfferings(turn);
+            _harvestTurn = game.TurnCounter;
         }
         catch (Exception e) { Plugin.Once("harvest", "upkeep (harvest start): " + e); }
     }
 
-    private static void PayOfferings(int turn)
+    /// <summary>The harvest this Cathedral's culture is doubled in, or false. Outside the harvest: the coming one (shown in the tooltips).</summary>
+    private static bool Doubled(Island island, Building building)
     {
-        foreach (var p in Core.Players.All)
-        {
-            var island = p.Island;
-            if (island?.grid == null || island.statistics == null) continue;
-            var state = StateOf(island.grid);
-            if (state.OfferTurn == turn) continue;
-            state.OfferTurn = turn;
-            state.Offered.Clear();
-            if (!Choices.Offers(p, turn)) continue;
-            var stats = island.statistics;
-            int gold = stats.Storage.stored.gold, used = 0;
-            foreach (var (id, b) in Buildings(island.grid))
-            {
-                if (b.type.name != BuildingTypeName.CATHEDRAL || gold - used < OfferGold) continue;
-                used += OfferGold;
-                state.Offered.Add(id.value);
-            }
-            if (used > 0) stats.RemoveResource(new ResourceAmount { gold = used });
-            Plugin.L.LogInfo($"turn {turn}: {p.Name} offered {used} gold at {state.Offered.Count} Cathedral(s)");
-        }
+        if (!TryState(island.grid, out var state) || state.Offered.Count == 0) return false;
+        int harvest = _harvest ? _harvestTurn : Core.Match.Turn + 1;
+        return state.OfferTurn == harvest && state.Offered.Contains(Building.Id.OfPosition(building.transform.position).value);
     }
 
     public static void YieldPostfix(Island __0, Building __1, ref ResourceAmount __result)
@@ -298,14 +357,33 @@ internal static class Upkeep
         try
         {
             // "is null": Building is a struct in the game, and its == operator throws on a null wrapper
-            if (!_harvest || !On || __0 is null || __1 is null) return;
-            if (!TryState(__0.grid, out var state) || state.OfferTurn != _harvestTurn || state.Offered.Count == 0) return;
-            if (!state.Offered.Contains(Building.Id.OfPosition(__1.transform.position).value)) return;
+            if (!On || __0 is null || __1 is null || !Doubled(__0, __1)) return;
             var r = __result;
             r.culture *= 2;
             __result = r;
         }
         catch (Exception e) { Plugin.Once("yield", "upkeep (Cathedral culture): " + e); }
+    }
+
+    /// <summary>
+    /// The harvest screen's line for the Cathedrals ("N Churches x F culture") uses AverageFactor, not Yield: with an offering the factor is
+    /// worked out again from the (doubled) yields, so the screen shows what you really get.
+    /// </summary>
+    public static void AverageFactorPostfix(BuildingTypeProducerAmplifier __instance, Island __0, Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<Building> __1, ref float __result)
+    {
+        try
+        {
+            if (!On || __0 is null || __1 is null || __1.Length == 0 || __instance.name != BuildingTypeName.CATHEDRAL) return;
+            bool any = false;
+            foreach (var b in __1) if (!(b is null) && Doubled(__0, b)) { any = true; break; }
+            if (!any) return;
+            int count = __instance.AmplifiedCount(__0);
+            if (count <= 0) return;
+            float sum = 0;
+            foreach (var b in __1) if (!(b is null)) sum += __instance.Yield(__0, b).culture;
+            __result = sum / __1.Length / count;
+        }
+        catch (Exception e) { Plugin.Once("average", "upkeep (harvest screen): " + e); }
     }
 
     // ------------------------------------------------------------------ for the window
@@ -314,12 +392,16 @@ internal static class Upkeep
     internal static (int towers, int lights, bool now) Unpaid(Island island) =>
         island?.grid != null && TryState(island.grid, out var s) ? (s.Towers.Count, s.Lights.Count, s.Turn == Core.Match.Turn) : (0, 0, false);
 
-    /// <summary>The Cathedrals on this island.</summary>
-    internal static int Cathedrals(Island island)
+    /// <summary>The Cathedrals on this island (building id values).</summary>
+    internal static List<int> Cathedrals(Island island)
     {
-        if (island?.grid == null) return 0;
-        int n = 0;
-        foreach (var (_, b) in Buildings(island.grid)) if (b.type.name == BuildingTypeName.CATHEDRAL) n++;
-        return n;
+        var list = new List<int>();
+        if (island?.grid == null) return list;
+        foreach (var (id, b) in Buildings(island.grid)) if (b.type.name == BuildingTypeName.CATHEDRAL) list.Add(id.value);
+        return list;
     }
+
+    /// <summary>How many of this island's Cathedrals have an offering for the next harvest.</summary>
+    internal static int OfferedForNextHarvest(Island island) =>
+        island?.grid != null && TryState(island.grid, out var s) && s.OfferTurn == Core.Match.Turn + 1 ? s.Offered.Count : 0;
 }

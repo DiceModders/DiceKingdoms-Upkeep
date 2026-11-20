@@ -5,7 +5,7 @@ A lobby rule for Dice Kingdoms (off by default): defence buildings cost somethin
 - **Guard towers** eat food every turn (1 each, set in the lobby).
 - **Lighthouses** use wood or stone every turn (1 each, whichever you have more of).
 - An unpaid guard tower or lighthouse gets the game's hungry state and **does not shoot** in that turn's combat. An unpaid lighthouse also gives **no fish bonus** at the next harvest.
-- **Cathedral offering:** during the build phase you can make an offering (4 gold per Cathedral, set in the lobby). At the next harvest the gold is paid and those Cathedrals give double culture.
+- **Cathedral offering:** during the build phase you can make an offering (4 gold per Cathedral, set in the lobby). It works like a market purchase: the gold goes at once, and those Cathedrals give double culture at the next harvest (the harvest screen and the tooltips show the doubled culture).
 
 The upkeep is paid in the disasters phase, together with the game's own food upkeep for the houses.
 
@@ -15,7 +15,7 @@ While a match with the rule on is running, a button on the top bar opens the Upk
 
 - **Feed the guard towers** / **Pay the lighthouses**: switch off to keep the resources (those buildings then do not shoot).
 - **Guard towers eat before the houses**: when food is short, the towers are fed first (otherwise the houses eat first).
-- **Make an offering**: once per turn, in the build phase.
+- **Make an offering**: once per turn, in the build phase; the offering is sent like any of the game's own build actions.
 
 A switch counts from the next turn, so every player's computer knows it before it is used. Computer players pay everything, and the houses eat first.
 

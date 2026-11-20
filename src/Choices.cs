@@ -1,4 +1,3 @@
-using System;
 using BepInEx.Configuration;
 using DiceModders.ModCore;
 
@@ -8,15 +7,14 @@ using Core = DiceModders.ModCore.ModCore;
 
 /// <summary>
 /// A player's upkeep choices, shared with every computer through ModCore's player values. A change made during turn N counts from turn N + 1
-/// (the user's choice), so it has reached every computer long before the disasters phase that uses it.
+/// (so it has reached every computer long before the disasters phase that uses it).
 ///   "upkeep.c" = "from|flags|before": flags = pay guard towers, pay lighthouses, guard towers eat first ('1'/'0'); "before" counts until turn "from".
-///   "upkeep.o" = the turn whose harvest gets this player's Cathedral offering.
-/// Computer players and players without a value: pay everything, houses eat first, no offering.
+/// Computer players and players without a value: pay everything, houses eat first.
+/// (The Cathedral offering does not use player values: it travels as one of the game's own build actions, see <see cref="Upkeep"/>.)
 /// </summary>
 internal static class Choices
 {
     private const string ChoiceKey = "upkeep.c";
-    private const string OfferKey = "upkeep.o";
     internal const string Default = "110";
 
     internal static ConfigEntry<bool> PayTowers, PayLighthouses, TowersFirst;
@@ -40,20 +38,12 @@ internal static class Choices
         Core.Lobby.PlayerValues.Set(ChoiceKey, from + "|" + OwnFlags + "|" + now);
     }
 
-    /// <summary>Asks for this player's Cathedral offering at the next harvest.</summary>
-    internal static void Offer() => Core.Lobby.PlayerValues.Set(OfferKey, (Core.Match.Turn + 1).ToString());
-
-    internal static bool OfferedFor(int turn) => Core.Lobby.PlayerValues.Get(LocalId, OfferKey) == turn.ToString();
-
     /// <summary>The flags of <paramref name="player"/> that count in <paramref name="turn"/>.</summary>
     internal static string Of(MatchPlayer player, int turn)
     {
         if (player == null || player.IsAI) return Default;
         return Effective(Core.Lobby.PlayerValues.Get(player.Id, ChoiceKey), turn);
     }
-
-    internal static bool Offers(MatchPlayer player, int turn) =>
-        player != null && !player.IsAI && Core.Lobby.PlayerValues.Get(player.Id, OfferKey) == turn.ToString();
 
     private static string Effective(string value, int turn)
     {

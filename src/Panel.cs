@@ -1,4 +1,7 @@
+using System;
+using DiceKingdoms.Interface;
 using DiceModders.ModCore;
+using DiceModders.ModCore.Tools;
 using DiceModders.UiKit;
 using DiceModders.UiKit.Custom;
 using DiceModders.UiKit.Native;
@@ -9,8 +12,8 @@ using Core = DiceModders.ModCore.ModCore;
 
 /// <summary>
 /// The Upkeep window, opened from the top bar while a match with the rule on is running. Three switches (pay the guard towers, pay the
-/// lighthouses, guard towers eat first) and the Cathedral offering. A switch counts from the next turn; the offering can be made during the
-/// build phase and is paid at the next harvest. It redraws on the game's phase changes and on a language change.
+/// lighthouses, guard towers eat first) and the Cathedral offering. A switch counts from the next turn. The offering is a build action like a
+/// market purchase: the gold goes at the click, during the build phase. It redraws on the game's phase changes and on a language change.
 /// </summary>
 internal static class Panel
 {
@@ -20,7 +23,10 @@ internal static class Panel
     private static UiButton _offer;
     private static UiText _offerText, _status;
 
-    internal static void Install(UiScope ui)
+    // the game's build interface while the build phase is shown (it holds your island's BuildData); told by the game, never searched for
+    private static BuildInterface _build;
+
+    internal static void Install(UiScope ui, Patcher patcher)
     {
         _ui = ui;
         _ui?.WhenReady(s => { _button = s.Native.TopBar.AddIconButton("food", Tx.T("panel.tooltip"), Toggle, 21); Refresh(); });
@@ -28,6 +34,15 @@ internal static class Panel
         Core.Match.Started += Refresh;
         Core.Match.Ended += Refresh;
         Core.Match.PhaseEntered += _ => { Refresh(); Redraw(); };
+        patcher.Patch(typeof(BuildInterface), "OnEnable", typeof(Panel), postfix: nameof(BuildShown));
+        patcher.Patch(typeof(BuildInterface), "OnDisable", typeof(Panel), postfix: nameof(BuildHidden));
+    }
+
+    public static void BuildShown(BuildInterface __instance) { _build = __instance; Redraw(); }
+    public static void BuildHidden(BuildInterface __instance)
+    {
+        if (_build != null && __instance != null && _build.Pointer == __instance.Pointer) _build = null;
+        Redraw();
     }
 
     internal static void Refresh()
@@ -58,17 +73,31 @@ internal static class Panel
         Redraw();
     }
 
-    private static void Choose(System.Action set)
+    private static void Choose(Action set)
     {
         set();
         Choices.Publish();
         Redraw();
     }
 
+    /// <summary>Plans one offering action per Cathedral without one (the game drops the ones you cannot pay for).</summary>
     private static void Offer()
     {
-        if (Core.Match.Phase != MatchPhase.Build || Choices.OfferedFor(Core.Match.Turn + 1)) return;
-        Choices.Offer();
+        try
+        {
+            var data = _build?.Data;
+            if (data == null || Core.Match.Phase != MatchPhase.Build) return;
+            int made = 0;
+            foreach (int cathedral in Upkeep.Cathedrals(data.Island))
+            {
+                int id = cathedral | Upkeep.OfferFlag;
+                var buildingId = System.Runtime.CompilerServices.Unsafe.As<int, DiceKingdoms.Game.Building.Id>(ref id);   // Building.Id is one int; its field is readonly
+                if (data.RepairBuilding(buildingId)) made++;
+            }
+            _build?.RefreshButtons();   // what you can still afford
+            Plugin.L.LogInfo($"offering: {made} Cathedral(s)");
+        }
+        catch (Exception e) { Plugin.L.LogWarning("offering: " + e.Message); }
         Redraw();
     }
 
@@ -76,13 +105,13 @@ internal static class Panel
     {
         if (_window == null) return;
         var island = Core.Players.Local?.Island;
-        int cathedrals = Upkeep.Cathedrals(island);
-        bool offered = Choices.OfferedFor(Core.Match.Turn + 1);
-        bool canOffer = Core.Match.Phase == MatchPhase.Build && !offered && cathedrals > 0;
+        int cathedrals = Upkeep.Cathedrals(island).Count;
+        int offered = Upkeep.OfferedForNextHarvest(island);
+        bool canOffer = _build != null && Core.Match.Phase == MatchPhase.Build && cathedrals > offered;
 
         if (_offerText != null)
             _offerText.Value = cathedrals == 0 ? Tx.T("panel.noCathedral")
-                : offered ? Tx.T("panel.offered", Upkeep.OfferGold * cathedrals, cathedrals)
+                : offered > 0 ? Tx.T("panel.offered", offered, cathedrals)
                 : Tx.T("panel.offerHelp", Upkeep.OfferGold, cathedrals);
         _offer?.Interactable(canOffer);
 
