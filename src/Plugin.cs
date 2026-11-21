@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string Guid = "org.dicemodders.dicekingdoms.upkeep";
     public const string Name = "DiceKingdoms Upkeep";
-    public const string Version = "1.0.1";
+    public const string Version = "1.0.2";
 
     internal static ManualLogSource L;
     /// <summary>The mod's own switch ([General] Enabled); while off the game behaves as without the mod.</summary>

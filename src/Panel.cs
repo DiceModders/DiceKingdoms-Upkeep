@@ -89,11 +89,7 @@ internal static class Panel
             if (data == null || Core.Match.Phase != MatchPhase.Build) return;
             int made = 0;
             foreach (int cathedral in Upkeep.Cathedrals(data.Island))
-            {
-                int id = cathedral | Upkeep.OfferFlag;
-                var buildingId = System.Runtime.CompilerServices.Unsafe.As<int, DiceKingdoms.Game.Building.Id>(ref id);   // Building.Id is one int; its field is readonly
-                if (data.RepairBuilding(buildingId)) made++;
-            }
+                if (Core.BuildActions.Plan(data, Upkeep.OfferAction, cathedral)) made++;
             _build?.RefreshButtons();   // what you can still afford
             Plugin.L.LogInfo($"offering: {made} Cathedral(s)");
         }

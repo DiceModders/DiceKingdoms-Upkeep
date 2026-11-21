@@ -28,11 +28,13 @@ A switch counts from the next turn, so every player's computer knows it before i
 | Wood or stone per lighthouse | 1 |
 | Cathedral offering (gold) | 4 |
 
+In the lobby's rules list *Upkeep* is a tick; while it is on, *Upkeep: settings* opens the three numbers in their own window (ModBridge).
+
 Every player in the match needs this mod (ModCore compares the mods in the lobby).
 
 ## Install
 
-Needs BepInEx 6 (IL2CPP), [ModCore](https://github.com/DiceModders/ModCore) and [UiKit](https://github.com/DiceModders/UiKit). Put `DiceModders.Upkeep.dll` into `BepInEx\plugins`, with the game closed.
+Needs BepInEx 6 (IL2CPP), [ModCore](https://github.com/DiceModders/DiceKingdoms-ModCore) 1.2.0 or newer, [UiKit](https://github.com/DiceModders/UiKit) and [ModBridge](https://github.com/DiceModders/DiceKingdoms-ModBridge). Put `DiceModders.Upkeep.dll` into `BepInEx\plugins`, with the game closed.
 
 ## Build
 

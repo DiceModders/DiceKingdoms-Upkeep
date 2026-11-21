@@ -65,7 +65,7 @@ internal static class Upkeep
         patcher.Patch(typeof(HarvestPhase), "Reset", typeof(Upkeep), prefix: nameof(HarvestResetPrefix));
         patcher.Patch(typeof(BuildingTypeProducerAmplifier), "Yield", typeof(Upkeep), postfix: nameof(YieldPostfix));
         patcher.Patch(typeof(BuildingTypeProducerAmplifier), "AverageFactor", typeof(Upkeep), postfix: nameof(AverageFactorPostfix));
-        HookDoAction();
+        Core.BuildActions.Register(OfferAction, "Upkeep (Cathedral offering)", Offer);
 
         Core.Match.PhaseEntered += phase => { if (phase == MatchPhase.Disasters) _harvest = false; };
         Core.Match.Started += Clear;
@@ -255,58 +255,10 @@ internal static class Upkeep
     // ------------------------------------------------------------------ the Cathedral offering: one of the game's own build actions
 
     /// <summary>
-    /// The offering travels like a market purchase: the window plans the game's own build action REPAIR_BUILDING (type 0) on the Cathedral's
-    /// id with this bit set. The game sends it to everybody with its own messages, runs it at once on your screen (preview: the gold drops at the
-    /// click) and on every other computer when the build phase ends (BuildPhase.ApplyChanges), which the game waits for. Every computer has
-    /// this mod (the rule is used only then), so every computer reads it as an offering. Building ids are (y &lt;&lt; 16 | x), far below this bit.
+    /// The offering travels like a market purchase, as one of ModCore's build actions (code 0): the window plans it on the Cathedral, your screen
+    /// applies it at the click (the gold drops) and every other computer when the build phase ends, which the game waits for.
     /// </summary>
-    internal const int OfferFlag = 0x40000000;
-    private const int RepairAction = 0;
-
-    // BuildData.DoAction(ref Action) takes the action struct BY REFERENCE, and the action holds object references (Building, arrays,
-    // Technology, Player). A Harmony patch on it made the game crash at the first building placed (2026-11-21): Il2CppInterop cannot
-    // pass such a struct by reference. So this is a plain native hook that reads the action in place:
-    //   bool DoAction(BuildData* this, BuildData.Action* action, MethodInfo* method)
-    //   Action: type (int) at 0x0, buildingId (int) at 0xC
-    private const int ActionType = 0x0, ActionBuildingId = 0xC;
-
-    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    private delegate byte DoActionFn(IntPtr self, IntPtr action, IntPtr method);
-    private static DoActionFn _doActionHook, _doActionOriginal;   // kept alive for as long as the game runs
-    private static object _doActionDetour;
-
-    private static void HookDoAction()
-    {
-        try
-        {
-            var method = typeof(BuildData).GetMethod("DoAction");
-            var field = Il2CppInterop.Common.Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(method);
-            IntPtr methodInfo = (IntPtr)field.GetValue(null);
-            IntPtr code = System.Runtime.InteropServices.Marshal.ReadIntPtr(methodInfo);   // Il2CppMethodInfo.methodPointer is its first field
-            _doActionHook = DoActionNative;
-            _doActionDetour = BepInEx.Unity.IL2CPP.Hook.INativeDetour.CreateAndApply(code, _doActionHook, out _doActionOriginal);
-            Plugin.L.LogInfo("[patch] OK   BuildData.DoAction (native, for the Cathedral offering)");
-        }
-        catch (Exception e) { Plugin.L.LogError("[patch] FAILED BuildData.DoAction: " + e.Message + " (the Cathedral offering will not work)"); }
-    }
-
-    /// <summary>
-    /// An offering action is handled here (the game's own code never sees it); every other action goes to the game unchanged. Same checks
-    /// and the same result on every computer: the Cathedral exists, it has no offering for the next harvest yet, and the island has the gold.
-    /// </summary>
-    private static byte DoActionNative(IntPtr self, IntPtr action, IntPtr method)
-    {
-        try
-        {
-            if (action != IntPtr.Zero && Mem.ReadInt(action, ActionType) == RepairAction)
-            {
-                int id = Mem.ReadInt(action, ActionBuildingId);
-                if ((id & OfferFlag) != 0) return Offer(new BuildData(self), id & ~OfferFlag) ? (byte)1 : (byte)0;
-            }
-        }
-        catch (Exception e) { Plugin.Once("offer", "upkeep (offering): " + e); return 0; }
-        return _doActionOriginal(self, action, method);
-    }
+    internal const int OfferAction = 0;
 
     private static bool Offer(BuildData data, int cathedral)
     {
