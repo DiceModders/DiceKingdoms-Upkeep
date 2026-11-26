@@ -12,20 +12,4 @@ internal static class Tx
     internal static void Load() => Set = DiceModders.ModCore.ModCore.Texts.Load();
     internal static string T(string key) => Set?.Get(key) ?? key;
     internal static string T(string key, params object[] values) => Set?.Get(key, values) ?? key;
-
-    /// <summary>
-    /// A Settings block that is made again, in the new language, when the game's language changes (UiKit rows keep the text they were made with).
-    /// <paramref name="spec"/> is called for every build, so every text in it is read again.
-    /// </summary>
-    internal static DiceModders.UiKit.Native.SettingsBlockHandle Block(DiceModders.UiKit.UiScope ui, System.Func<DiceModders.UiKit.Native.SettingsBlockSpec> spec)
-    {
-        if (ui == null) return null;
-        var handle = ui.Native.Settings.AddBlock(spec());
-        DiceModders.ModCore.ModCore.Texts.LanguageChanged += () =>
-        {
-            handle?.Dispose();
-            handle = ui.Native.Settings.AddBlock(spec());
-        };
-        return handle;
-    }
 }

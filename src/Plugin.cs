@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string Guid = "org.dicemodders.dicekingdoms.upkeep";
     public const string Name = "DiceKingdoms Upkeep";
-    public const string Version = "1.0.2";
+    public const string Version = "1.0.3";
 
     internal static ManualLogSource L;
     /// <summary>The mod's own switch ([General] Enabled); while off the game behaves as without the mod.</summary>
@@ -42,7 +42,7 @@ public sealed class Plugin : BasePlugin
         Panel.Install(Ui.CreateScope(Guid), patcher);
         patcher.Summary();
 
-        Core.Mods.Switch(Config, description: "Turns the upkeep rule of this mod on or off.")
+        Core.Mods.Switch(Config, affectsSimulation: true, description: "Turns the upkeep rule of this mod on or off.")
             .WhenOn(() => { On = true; Panel.Refresh(); }, () => { On = false; Panel.Refresh(); });
     }
 

@@ -25,6 +25,9 @@ internal static class Choices
         PayLighthouses = config.Bind("Choices", "PayLighthouses", true, "Pay the lighthouses (unpaid ones do not shoot and give no fish bonus).");
         TowersFirst = config.Bind("Choices", "GuardTowersEatFirst", false, "When food is short, the guard towers eat before the houses.");
         Core.Match.Started += () => Publish(true);
+        // changed in the window or in a config menu: the other computers must learn it too (the next turn counts it)
+        foreach (var entry in new[] { PayTowers, PayLighthouses, TowersFirst })
+            entry.SettingChanged += (_, _) => { if (Core.Match.Running) Publish(); };
     }
 
     internal static string OwnFlags => (PayTowers.Value ? "1" : "0") + (PayLighthouses.Value ? "1" : "0") + (TowersFirst.Value ? "1" : "0");

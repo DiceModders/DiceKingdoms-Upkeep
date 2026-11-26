@@ -75,8 +75,7 @@ internal static class Panel
 
     private static void Choose(Action set)
     {
-        set();
-        Choices.Publish();
+        set();   // published by the setting's change event (Choices)
         Redraw();
     }
 
